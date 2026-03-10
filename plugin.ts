@@ -211,7 +211,9 @@ export default {
       try {
         await hub.onEvent(ctx, event);
       } catch (error) {
-        api.logger.error(`[progress-plugin] hub emit failed: ${String(error)}`);
+        api.logger.error(
+          `[progress-plugin] hub emit failed: runId=${event.runId} seq=${event.seq} phase=${event.phase} err=${String(error)}`,
+        );
       }
     };
 
@@ -279,7 +281,7 @@ export default {
           runId,
           seq,
           stream: "tool",
-          phase: error ? "failed" : "tool_end",
+          phase: "tool_end",
           level: error ? "error" : "info",
           message: error ? `工具执行失败：${toolName}` : `工具执行完成：${toolName}`,
           sessionId: asString(asObject(ctx).sessionId),
