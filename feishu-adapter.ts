@@ -32,6 +32,7 @@ function renderCard(state: RunProgressState, event?: ProgressEvent): Record<stri
       : "进行中";
   const durationText =
     state.durationMs !== undefined && state.durationMs >= 0 ? `${(state.durationMs / 1000).toFixed(1)}s` : "--";
+  const durationLabel = state.status === "running" ? "已耗时" : "总耗时";
 
   return {
     config: { wide_screen_mode: true },
@@ -46,7 +47,7 @@ function renderCard(state: RunProgressState, event?: ProgressEvent): Record<stri
         tag: "div",
         text: {
           tag: "lark_md",
-          content: `**阶段**: ${state.currentPhase}\n**进度**: ${progressText}\n**总耗时**: ${durationText}`,
+          content: `**阶段**: ${state.currentPhase}\n**进度**: ${progressText}\n**${durationLabel}**: ${durationText}`,
         },
       },
       {
