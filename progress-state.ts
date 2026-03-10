@@ -24,6 +24,7 @@ export interface RunProgressState {
   stepTotal?: number;
   percent?: number;
   etaSec?: number;
+  durationMs?: number;
 
   lastError?: string;
 }

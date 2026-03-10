@@ -73,6 +73,7 @@ export const reducer: ProgressReducer = {
       next.stepTotal = ev.metrics.stepTotal ?? next.stepTotal;
       next.percent = ev.metrics.percent ?? next.percent;
       next.etaSec = ev.metrics.etaSec ?? next.etaSec;
+      next.durationMs = ev.metrics.durationMs ?? next.durationMs;
     }
 
     if (ev.level === "error") {
