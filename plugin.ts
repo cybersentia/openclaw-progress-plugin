@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { DefaultProgressHub } from "./progress-hub";
 import { FeishuAdapter } from "./feishu-adapter";
 import { FeishuHttpPublisher } from "./feishu-publisher";
@@ -12,12 +14,14 @@ type PluginApi = {
     warn: (message: string) => void;
     error: (message: string) => void;
   };
-  on: (hookName: string, handler: (event: any, ctx: any) => void | Promise<void>) => void;
+  on: (hookName: string, handler: (event: unknown, ctx: unknown) => void | Promise<void>) => void;
+  resolvePath?: (input: string) => string;
 };
 
 type Route = {
   conversationId: string;
   channel: string;
+  updatedAt: number;
 };
 
 type SkillConfig = {
@@ -29,6 +33,8 @@ type SkillConfig = {
     receiveIdType?: "chat_id" | "open_id" | "union_id" | "email" | "user_id";
     defaultConversationId?: string;
     timeoutMs?: number;
+    stateFile?: string;
+    runMessageTtlMs?: number;
   };
   throttle?: {
     minEmitIntervalMs?: number;
@@ -36,7 +42,17 @@ type SkillConfig = {
   };
 };
 
+type PersistedState = {
+  version: 1;
+  updatedAt: number;
+  runMessages: Array<{ runId: string; messageId: string; updatedAt: number }>;
+  routes: Array<{ sessionKey: string; conversationId: string; channel: string; updatedAt: number }>;
+  runs: Array<{ sessionKey: string; runId: string; updatedAt: number }>;
+};
+
 const FEISHU_CHANNEL = "feishu";
+const DEFAULT_STATE_FILE = ".openclaw-progress-plugin-state.json";
+const DEFAULT_RUN_MESSAGE_TTL_MS = 30 * 60 * 1000;
 
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -70,6 +86,8 @@ function parseConfig(raw: unknown): SkillConfig {
         | undefined) ?? "chat_id",
       defaultConversationId: asString(feishuRaw.defaultConversationId),
       timeoutMs: asNumber(feishuRaw.timeoutMs),
+      stateFile: asString(feishuRaw.stateFile),
+      runMessageTtlMs: asNumber(feishuRaw.runMessageTtlMs),
     },
     throttle: {
       minEmitIntervalMs: asNumber(throttleRaw.minEmitIntervalMs),
@@ -136,6 +154,30 @@ function extractSessionKeys(event: unknown, ctx: unknown): string[] {
   return [...result];
 }
 
+function resolveStateFilePath(api: PluginApi, configuredPath?: string): string {
+  const raw = configuredPath ?? DEFAULT_STATE_FILE;
+  if (path.isAbsolute(raw)) return raw;
+  if (api.resolvePath) return api.resolvePath(raw);
+  return path.resolve(process.cwd(), raw);
+}
+
+function loadPersistedState(filePath: string): PersistedState | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(raw) as PersistedState;
+    if (!parsed || parsed.version !== 1) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedState(filePath: string, state: PersistedState): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(state), "utf-8");
+}
+
 export default {
   id: "openclaw-progress-plugin",
   name: "OpenClaw Progress Plugin",
@@ -153,6 +195,9 @@ export default {
       return;
     }
 
+    const stateFilePath = resolveStateFilePath(api, feishu.stateFile);
+    const runMessageTtlMs = feishu.runMessageTtlMs ?? DEFAULT_RUN_MESSAGE_TTL_MS;
+
     const publisher = new FeishuHttpPublisher({
       appId: feishu.appId,
       appSecret: feishu.appSecret,
@@ -161,9 +206,10 @@ export default {
       timeoutMs: feishu.timeoutMs,
     });
 
+    const feishuAdapter = new FeishuAdapter(publisher);
     const hub = new DefaultProgressHub({
       reducer,
-      adapters: [new FeishuAdapter(publisher)],
+      adapters: [feishuAdapter],
       throttle: {
         minEmitIntervalMs: config.throttle?.minEmitIntervalMs ?? 1000,
         checkpointPhases: new Set(["planning", "tool_end", "retrying", "finalizing"]),
@@ -175,6 +221,52 @@ export default {
     const runBySessionKey = new Map<string, string>();
     const seqByRun = new Map<string, number>();
 
+    const restore = loadPersistedState(stateFilePath);
+    if (restore) {
+      const now = Date.now();
+      for (const entry of restore.runMessages) {
+        if (now - entry.updatedAt <= runMessageTtlMs) {
+          feishuAdapter.bindRunMessage(entry.runId, entry.messageId);
+        }
+      }
+      for (const entry of restore.routes) {
+        routeBySessionKey.set(entry.sessionKey, {
+          conversationId: entry.conversationId,
+          channel: entry.channel,
+          updatedAt: entry.updatedAt,
+        });
+      }
+      for (const entry of restore.runs) {
+        runBySessionKey.set(entry.sessionKey, entry.runId);
+      }
+      api.logger.info(`[progress-plugin] restored persisted state from ${stateFilePath}`);
+    }
+
+    const persist = () => {
+      const now = Date.now();
+      const runMessages = Object.entries(feishuAdapter.snapshotRunMessages())
+        .map(([runId, messageId]) => ({ runId, messageId, updatedAt: now }))
+        .filter((entry) => now - entry.updatedAt <= runMessageTtlMs);
+      const routes = [...routeBySessionKey.entries()].map(([sessionKey, route]) => ({
+        sessionKey,
+        conversationId: route.conversationId,
+        channel: route.channel,
+        updatedAt: route.updatedAt,
+      }));
+      const runs = [...runBySessionKey.entries()].map(([sessionKey, runId]) => ({
+        sessionKey,
+        runId,
+        updatedAt: now,
+      }));
+      writePersistedState(stateFilePath, {
+        version: 1,
+        updatedAt: now,
+        runMessages,
+        routes,
+        runs,
+      });
+    };
+
     const resolveRoute = (sessionKeys: string[]): Route | undefined => {
       for (const key of sessionKeys) {
         const route = routeBySessionKey.get(key);
@@ -184,6 +276,7 @@ export default {
         return {
           channel: FEISHU_CHANNEL,
           conversationId: feishu.defaultConversationId,
+          updatedAt: Date.now(),
         };
       }
       return undefined;
@@ -210,6 +303,7 @@ export default {
     const emit = async (ctx: AdapterContext, event: ProgressEvent) => {
       try {
         await hub.onEvent(ctx, event);
+        persist();
       } catch (error) {
         api.logger.error(
           `[progress-plugin] hub emit failed: runId=${event.runId} seq=${event.seq} phase=${event.phase} err=${String(error)}`,
@@ -226,10 +320,11 @@ export default {
       if (!conversationId) {
         return;
       }
-      const route: Route = { channel: FEISHU_CHANNEL, conversationId };
+      const route: Route = { channel: FEISHU_CHANNEL, conversationId, updatedAt: Date.now() };
       for (const key of extractSessionKeys(event, ctx)) {
         routeBySessionKey.set(key, route);
       }
+      persist();
     });
 
     api.on("before_tool_call", async (event, ctx) => {
@@ -332,6 +427,7 @@ export default {
         runBySessionKey.delete(key);
       }
       seqByRun.delete(runId);
+      persist();
     });
 
     api.logger.info("[progress-plugin] plugin registered");

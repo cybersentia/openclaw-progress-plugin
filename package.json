@@ -6,6 +6,6 @@
   "license": "MIT",
   "description": "Feishu-first progress plugin for OpenClaw",
   "openclaw": {
-    "extensions": ["index.ts"]
+    "extensions": ["plugin.ts"]
   }
 }

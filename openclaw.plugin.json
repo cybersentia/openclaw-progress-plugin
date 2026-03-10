@@ -19,7 +19,9 @@
             "default": "chat_id"
           },
           "defaultConversationId": { "type": "string" },
-          "timeoutMs": { "type": "number", "default": 10000 }
+          "timeoutMs": { "type": "number", "default": 10000 },
+          "stateFile": { "type": "string", "default": ".openclaw-progress-plugin-state.json" },
+          "runMessageTtlMs": { "type": "number", "default": 1800000 }
         },
         "additionalProperties": false
       },
