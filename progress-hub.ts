@@ -47,6 +47,28 @@ export class DefaultProgressHub implements ProgressHub {
 
   constructor(private readonly options: ProgressHubOptions) {}
 
+  private async runAdapterAction(
+    action: "event" | "checkpoint" | "final",
+    ctx: AdapterContext,
+    ev: ProgressEvent,
+    state: RunProgressState,
+  ): Promise<void> {
+    const results =
+      action === "event"
+        ? await Promise.all(this.options.adapters.map((adapter) => adapter.emitEvent(ctx, ev, state)))
+        : action === "checkpoint"
+        ? await Promise.all(this.options.adapters.map((adapter) => adapter.emitCheckpoint(ctx, state)))
+        : await Promise.all(this.options.adapters.map((adapter) => adapter.emitFinal(ctx, state)));
+
+    for (let i = 0; i < results.length; i += 1) {
+      const result = results[i];
+      const adapter = this.options.adapters[i];
+      if (!result.ok) {
+        throw new Error(`[${adapter.name}] ${action} failed: ${result.error ?? "unknown error"}`);
+      }
+    }
+  }
+
   getState(runId: string): RunProgressState | undefined {
     return this.states.get(runId);
   }
@@ -70,7 +92,7 @@ export class DefaultProgressHub implements ProgressHub {
     const checkpoint = this.options.throttle.checkpointPhases.has(ev.phase);
 
     if (terminal) {
-      await Promise.all(adapters.map((a) => a.emitFinal(ctx, next)));
+      await this.runAdapterAction("final", ctx, ev, next);
       meta.lastEventAt = now;
       meta.lastCheckpointAt = now;
       meta.lastHeartbeatAt = now;
@@ -83,7 +105,7 @@ export class DefaultProgressHub implements ProgressHub {
       now - meta.lastEventAt >= this.options.throttle.minEmitIntervalMs;
 
     if (canEmitEvent) {
-      await Promise.all(adapters.map((a) => a.emitEvent(ctx, ev, next)));
+      await this.runAdapterAction("event", ctx, ev, next);
       meta.lastEventAt = now;
     }
 
@@ -93,7 +115,7 @@ export class DefaultProgressHub implements ProgressHub {
         now - meta.lastCheckpointAt >= this.options.throttle.minEmitIntervalMs);
 
     if (canEmitCheckpoint) {
-      await Promise.all(adapters.map((a) => a.emitCheckpoint(ctx, next)));
+      await this.runAdapterAction("checkpoint", ctx, ev, next);
       meta.lastCheckpointAt = now;
     }
 
@@ -103,7 +125,7 @@ export class DefaultProgressHub implements ProgressHub {
 
     if (canEmitHeartbeat) {
       // 心跳沿用 checkpoint 渠道，避免新增 adapter 接口
-      await Promise.all(adapters.map((a) => a.emitCheckpoint(ctx, next)));
+      await this.runAdapterAction("checkpoint", ctx, ev, next);
       meta.lastHeartbeatAt = now;
     }
 
