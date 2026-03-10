@@ -46,7 +46,7 @@ function renderCard(state: RunProgressState, event?: ProgressEvent): Record<stri
         tag: "div",
         text: {
           tag: "lark_md",
-          content: `**阶段**: ${state.currentPhase}\n**进度**: ${progressText}\n**耗时**: ${durationText}`,
+          content: `**阶段**: ${state.currentPhase}\n**进度**: ${progressText}\n**总耗时**: ${durationText}`,
         },
       },
       {
