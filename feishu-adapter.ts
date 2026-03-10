@@ -3,17 +3,11 @@ import type { ProgressEvent } from "./progress-schema";
 import type { RunProgressState } from "./progress-state";
 
 export interface FeishuPublisher {
-  /**
-   * 发送新消息，返回平台消息 ID
-   */
   sendMessage(params: {
     conversationId: string;
     content: Record<string, unknown>;
   }): Promise<{ ok: true; messageId: string } | { ok: false; error: string }>;
 
-  /**
-   * 更新已有消息（飞书支持按 messageId 更新卡片）
-   */
   updateMessage(params: {
     messageId: string;
     content: Record<string, unknown>;
@@ -80,6 +74,28 @@ export class FeishuAdapter implements ProgressAdapter {
 
   async init(): Promise<void> {}
 
+  bindRunMessage(runId: string, messageId: string): void {
+    this.messageByRun.set(runId, messageId);
+  }
+
+  snapshotRunMessages(): Record<string, string> {
+    return Object.fromEntries(this.messageByRun.entries());
+  }
+
+  private async sendAndBind(
+    conversationId: string,
+    state: RunProgressState,
+    card: Record<string, unknown>,
+  ): Promise<AdapterEmitResult> {
+    const sent = await this.publisher.sendMessage({
+      conversationId,
+      content: card,
+    });
+    if (!sent.ok) return { ok: false, error: sent.error };
+    this.messageByRun.set(state.runId, sent.messageId);
+    return { ok: true, messageId: sent.messageId };
+  }
+
   async emitEvent(
     ctx: AdapterContext,
     ev: ProgressEvent,
@@ -93,18 +109,13 @@ export class FeishuAdapter implements ProgressAdapter {
         messageId: existingMessageId,
         content: card,
       });
-      return updated.ok ? { ok: true, messageId: existingMessageId } : { ok: false, error: updated.error };
+      if (updated.ok) return { ok: true, messageId: existingMessageId };
+
+      // update 失败时回退成新发一条，避免 run 卡死在“永远更新失败”状态
+      return this.sendAndBind(ctx.conversationId, state, card);
     }
 
-    const sent = await this.publisher.sendMessage({
-      conversationId: ctx.conversationId,
-      content: card,
-    });
-
-    if (!sent.ok) return { ok: false, error: sent.error };
-
-    this.messageByRun.set(state.runId, sent.messageId);
-    return { ok: true, messageId: sent.messageId };
+    return this.sendAndBind(ctx.conversationId, state, card);
   }
 
   async emitCheckpoint(ctx: AdapterContext, state: RunProgressState): Promise<AdapterEmitResult> {
@@ -116,18 +127,12 @@ export class FeishuAdapter implements ProgressAdapter {
         messageId: existingMessageId,
         content: card,
       });
-      return updated.ok ? { ok: true, messageId: existingMessageId } : { ok: false, error: updated.error };
+      if (updated.ok) return { ok: true, messageId: existingMessageId };
+
+      return this.sendAndBind(ctx.conversationId, state, card);
     }
 
-    const sent = await this.publisher.sendMessage({
-      conversationId: ctx.conversationId,
-      content: card,
-    });
-
-    if (!sent.ok) return { ok: false, error: sent.error };
-
-    this.messageByRun.set(state.runId, sent.messageId);
-    return { ok: true, messageId: sent.messageId };
+    return this.sendAndBind(ctx.conversationId, state, card);
   }
 
   async emitFinal(ctx: AdapterContext, state: RunProgressState): Promise<AdapterEmitResult> {

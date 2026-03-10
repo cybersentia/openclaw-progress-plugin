@@ -15,6 +15,13 @@ type FeishuMessageResponse = {
   };
 };
 
+type FeishuHttpResult = {
+  status: number;
+  text: string;
+};
+
+type CardPayloadMode = "raw-card" | "wrapped-card";
+
 export interface FeishuHttpPublisherOptions {
   appId: string;
   appSecret: string;
@@ -44,24 +51,31 @@ export class FeishuHttpPublisher implements FeishuPublisher {
   async sendMessage(params: { conversationId: string; content: Record<string, unknown> }) {
     try {
       const token = await this.getTenantAccessToken();
-      const body = {
-        receive_id: params.conversationId,
-        msg_type: "interactive",
-        content: JSON.stringify(params.content),
-      };
 
-      const result = await this.request<FeishuMessageResponse>({
-        method: "POST",
-        path: `/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(this.receiveIdType)}`,
+      const firstTry = await this.sendWithMode({
         token,
-        body,
+        conversationId: params.conversationId,
+        content: params.content,
+        mode: "raw-card",
       });
+      if (firstTry.ok) return firstTry;
 
-      if (result.code !== 0 || !result.data?.message_id) {
-        return { ok: false as const, error: `feishu send failed: code=${result.code} msg=${result.msg}` };
+      if (!this.shouldRetryWithAlternateCardMode(firstTry.error)) {
+        return firstTry;
       }
 
-      return { ok: true as const, messageId: result.data.message_id };
+      const retry = await this.sendWithMode({
+        token,
+        conversationId: params.conversationId,
+        content: params.content,
+        mode: "wrapped-card",
+      });
+      if (retry.ok) return retry;
+
+      return {
+        ok: false as const,
+        error: `feishu send failed after retry: primary=${firstTry.error}; retry=${retry.error}`,
+      };
     } catch (error) {
       return { ok: false as const, error: this.toErrorMessage(error) };
     }
@@ -70,24 +84,127 @@ export class FeishuHttpPublisher implements FeishuPublisher {
   async updateMessage(params: { messageId: string; content: Record<string, unknown> }) {
     try {
       const token = await this.getTenantAccessToken();
-      const body = {
-        content: JSON.stringify(params.content),
-      };
 
-      const result = await this.request<FeishuMessageResponse>({
-        method: "PATCH",
-        path: `/open-apis/im/v1/messages/${encodeURIComponent(params.messageId)}`,
+      const firstTry = await this.updateWithMode({
         token,
-        body,
+        messageId: params.messageId,
+        content: params.content,
+        mode: "raw-card",
       });
+      if (firstTry.ok) return firstTry;
 
-      if (result.code !== 0) {
-        return { ok: false as const, error: `feishu update failed: code=${result.code} msg=${result.msg}` };
+      if (!this.shouldRetryWithAlternateCardMode(firstTry.error)) {
+        return firstTry;
       }
 
-      return { ok: true as const };
+      const retry = await this.updateWithMode({
+        token,
+        messageId: params.messageId,
+        content: params.content,
+        mode: "wrapped-card",
+      });
+      if (retry.ok) return retry;
+
+      return {
+        ok: false as const,
+        error: `feishu update failed after retry: primary=${firstTry.error}; retry=${retry.error}`,
+      };
     } catch (error) {
       return { ok: false as const, error: this.toErrorMessage(error) };
+    }
+  }
+
+  private async sendWithMode(params: {
+    token: string;
+    conversationId: string;
+    content: Record<string, unknown>;
+    mode: CardPayloadMode;
+  }): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
+    const body = {
+      receive_id: params.conversationId,
+      msg_type: "interactive",
+      content: JSON.stringify(this.formatCardContent(params.content, params.mode)),
+    };
+
+    const raw = await this.requestRaw({
+      method: "POST",
+      path: `/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(this.receiveIdType)}`,
+      token: params.token,
+      body,
+    });
+
+    const parsed = this.parseMessageResponse(raw.text);
+    if (raw.status < 200 || raw.status >= 300) {
+      return {
+        ok: false,
+        error: `mode=${params.mode} http=${raw.status} body=${raw.text}`,
+      };
+    }
+    if (!parsed || parsed.code !== 0 || !parsed.data?.message_id) {
+      return {
+        ok: false,
+        error: `mode=${params.mode} code=${parsed?.code ?? "unknown"} msg=${parsed?.msg ?? raw.text}`,
+      };
+    }
+
+    return { ok: true, messageId: parsed.data.message_id };
+  }
+
+  private async updateWithMode(params: {
+    token: string;
+    messageId: string;
+    content: Record<string, unknown>;
+    mode: CardPayloadMode;
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const body = {
+      content: JSON.stringify(this.formatCardContent(params.content, params.mode)),
+    };
+
+    const raw = await this.requestRaw({
+      method: "PATCH",
+      path: `/open-apis/im/v1/messages/${encodeURIComponent(params.messageId)}`,
+      token: params.token,
+      body,
+    });
+
+    const parsed = this.parseMessageResponse(raw.text);
+    if (raw.status < 200 || raw.status >= 300) {
+      return {
+        ok: false,
+        error: `mode=${params.mode} http=${raw.status} body=${raw.text}`,
+      };
+    }
+    if (!parsed || parsed.code !== 0) {
+      return {
+        ok: false,
+        error: `mode=${params.mode} code=${parsed?.code ?? "unknown"} msg=${parsed?.msg ?? raw.text}`,
+      };
+    }
+
+    return { ok: true };
+  }
+
+  private formatCardContent(content: Record<string, unknown>, mode: CardPayloadMode): Record<string, unknown> {
+    if (mode === "wrapped-card") {
+      return { card: content };
+    }
+    return content;
+  }
+
+  private shouldRetryWithAlternateCardMode(errorText: string): boolean {
+    const lower = errorText.toLowerCase();
+    return (
+      lower.includes("230099") ||
+      lower.includes("200621") ||
+      lower.includes("parse card json err")
+    );
+  }
+
+  private parseMessageResponse(text: string): FeishuMessageResponse | null {
+    try {
+      return JSON.parse(text) as FeishuMessageResponse;
+    } catch {
+      return null;
     }
   }
 
@@ -97,7 +214,7 @@ export class FeishuHttpPublisher implements FeishuPublisher {
       return this.token;
     }
 
-    const response = await this.request<FeishuTokenResponse>({
+    const raw = await this.requestRaw({
       method: "POST",
       path: "/open-apis/auth/v3/tenant_access_token/internal",
       body: {
@@ -106,8 +223,11 @@ export class FeishuHttpPublisher implements FeishuPublisher {
       },
     });
 
-    if (response.code !== 0 || !response.tenant_access_token) {
-      throw new Error(`feishu auth failed: code=${response.code} msg=${response.msg}`);
+    const response = this.parseTokenResponse(raw.text);
+    if (raw.status < 200 || raw.status >= 300 || !response || response.code !== 0 || !response.tenant_access_token) {
+      throw new Error(
+        `feishu auth failed: http=${raw.status} code=${response?.code ?? "unknown"} msg=${response?.msg ?? raw.text}`,
+      );
     }
 
     this.token = response.tenant_access_token;
@@ -117,12 +237,20 @@ export class FeishuHttpPublisher implements FeishuPublisher {
     return this.token;
   }
 
-  private async request<T>(params: {
+  private parseTokenResponse(text: string): FeishuTokenResponse | null {
+    try {
+      return JSON.parse(text) as FeishuTokenResponse;
+    } catch {
+      return null;
+    }
+  }
+
+  private async requestRaw(params: {
     method: "POST" | "PATCH";
     path: string;
     body: Record<string, unknown>;
     token?: string;
-  }): Promise<T> {
+  }): Promise<FeishuHttpResult> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -142,11 +270,7 @@ export class FeishuHttpPublisher implements FeishuPublisher {
       });
 
       const text = await response.text();
-      if (!response.ok) {
-        throw new Error(`http ${response.status}: ${text}`);
-      }
-
-      return JSON.parse(text) as T;
+      return { status: response.status, text };
     } finally {
       clearTimeout(timer);
     }
