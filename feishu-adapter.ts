@@ -17,11 +17,19 @@ export interface FeishuPublisher {
 function renderCard(state: RunProgressState, event?: ProgressEvent): Record<string, unknown> {
   const title = `任务进度 · ${state.status}`;
   const progressText =
-    state.stepIndex && state.stepTotal
+    state.stepIndex !== undefined && state.stepTotal !== undefined && state.stepTotal > 0
       ? `${state.stepIndex}/${state.stepTotal}`
       : state.percent !== undefined
       ? `${state.percent}%`
-      : "--";
+      : state.status === "completed"
+      ? "已完成"
+      : state.status === "failed"
+      ? "失败"
+      : state.status === "cancelled"
+      ? "已取消"
+      : state.currentPhase === "tool_start" || state.currentPhase === "tool_update" || state.currentPhase === "tool_end"
+      ? "已进入执行阶段"
+      : "进行中";
 
   return {
     config: { wide_screen_mode: true },
