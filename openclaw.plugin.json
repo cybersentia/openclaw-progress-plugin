@@ -1,0 +1,37 @@
+{
+  "id": "openclaw-progress-skill",
+  "name": "OpenClaw Progress Skill",
+  "description": "Stream task progress to chat clients with Feishu-first adapter support.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "feishu": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "appId": { "type": "string" },
+          "appSecret": { "type": "string" },
+          "baseUrl": { "type": "string", "default": "https://open.feishu.cn" },
+          "receiveIdType": {
+            "type": "string",
+            "enum": ["chat_id", "open_id", "union_id", "email", "user_id"],
+            "default": "chat_id"
+          },
+          "defaultConversationId": { "type": "string" },
+          "timeoutMs": { "type": "number", "default": 10000 }
+        },
+        "additionalProperties": false
+      },
+      "throttle": {
+        "type": "object",
+        "properties": {
+          "minEmitIntervalMs": { "type": "number", "default": 1000 },
+          "heartbeatIntervalMs": { "type": "number", "default": 5000 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  }
+}
