@@ -30,6 +30,8 @@ function renderCard(state: RunProgressState, event?: ProgressEvent): Record<stri
       : state.currentPhase === "tool_start" || state.currentPhase === "tool_update" || state.currentPhase === "tool_end"
       ? "已进入执行阶段"
       : "进行中";
+  const durationText =
+    state.durationMs !== undefined && state.durationMs >= 0 ? `${(state.durationMs / 1000).toFixed(1)}s` : "--";
 
   return {
     config: { wide_screen_mode: true },
@@ -44,7 +46,7 @@ function renderCard(state: RunProgressState, event?: ProgressEvent): Record<stri
         tag: "div",
         text: {
           tag: "lark_md",
-          content: `**阶段**: ${state.currentPhase}\n**进度**: ${progressText}`,
+          content: `**阶段**: ${state.currentPhase}\n**进度**: ${progressText}\n**耗时**: ${durationText}`,
         },
       },
       {
