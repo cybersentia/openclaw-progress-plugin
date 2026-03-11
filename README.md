@@ -78,7 +78,6 @@ Add this into your OpenClaw config (example):
             "appId": "cli_xxx",
             "appSecret": "xxx",
             "receiveIdType": "chat_id",
-            "defaultConversationId": "oc_xxx",
             "timeoutMs": 10000
           },
           "throttle": {
@@ -91,6 +90,12 @@ Add this into your OpenClaw config (example):
   }
 }
 ```
+
+Configuration notes:
+- `receiveIdType`: target ID type for Feishu delivery. Keep `chat_id` in most cases.
+- `defaultConversationId`: **advanced optional fallback**. Used only when route binding is temporarily unavailable.
+  - Usually leave it unset and rely on automatic routing (plugin already prefers `chat_id`).
+  - If you must set it, provide a real conversation ID matching `receiveIdType` (for example a Feishu `chat_id`), obtained from raw Feishu events or gateway logs.
 
 ### 3) Restart OpenClaw gateway
 
