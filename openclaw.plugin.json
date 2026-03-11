@@ -13,11 +13,6 @@
           "appId": { "type": "string" },
           "appSecret": { "type": "string" },
           "baseUrl": { "type": "string", "default": "https://open.feishu.cn" },
-          "receiveIdType": {
-            "type": "string",
-            "enum": ["chat_id", "open_id", "union_id", "email", "user_id"],
-            "default": "chat_id"
-          },
           "defaultConversationId": { "type": "string" },
           "timeoutMs": { "type": "number", "default": 10000 },
           "stateFile": { "type": "string", "default": ".openclaw-progress-plugin-state.json" },

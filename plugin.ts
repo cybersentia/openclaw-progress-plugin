@@ -30,7 +30,6 @@ type SkillConfig = {
     appId?: string;
     appSecret?: string;
     baseUrl?: string;
-    receiveIdType?: "chat_id" | "open_id" | "union_id" | "email" | "user_id";
     defaultConversationId?: string;
     timeoutMs?: number;
     stateFile?: string;
@@ -51,6 +50,7 @@ type PersistedState = {
 };
 
 const FEISHU_CHANNEL = "feishu";
+const FEISHU_RECEIVE_ID_TYPE = "chat_id" as const;
 const DEFAULT_STATE_FILE = ".openclaw-progress-plugin-state.json";
 const DEFAULT_RUN_MESSAGE_TTL_MS = 30 * 60 * 1000;
 
@@ -129,13 +129,6 @@ function parseConfig(raw: unknown): SkillConfig {
       appId: asString(feishuRaw.appId),
       appSecret: asString(feishuRaw.appSecret),
       baseUrl: asString(feishuRaw.baseUrl),
-      receiveIdType: (asString(feishuRaw.receiveIdType) as
-        | "chat_id"
-        | "open_id"
-        | "union_id"
-        | "email"
-        | "user_id"
-        | undefined) ?? "chat_id",
       defaultConversationId: asString(feishuRaw.defaultConversationId),
       timeoutMs: asNumber(feishuRaw.timeoutMs),
       stateFile: asString(feishuRaw.stateFile),
@@ -279,7 +272,7 @@ export default {
       appId: feishu.appId,
       appSecret: feishu.appSecret,
       baseUrl: feishu.baseUrl,
-      receiveIdType: feishu.receiveIdType,
+      receiveIdType: FEISHU_RECEIVE_ID_TYPE,
       timeoutMs: feishu.timeoutMs,
     });
 
