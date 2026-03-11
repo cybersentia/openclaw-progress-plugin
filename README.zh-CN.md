@@ -76,7 +76,6 @@ git clone https://github.com/cybersentia/openclaw-progress-plugin.git /opt/openc
             "appId": "cli_xxx",
             "appSecret": "xxx",
             "receiveIdType": "chat_id",
-            "defaultConversationId": "oc_xxx",
             "timeoutMs": 10000
           },
           "throttle": {
@@ -89,6 +88,12 @@ git clone https://github.com/cybersentia/openclaw-progress-plugin.git /opt/openc
   }
 }
 ```
+
+配置说明（重点）：
+- `receiveIdType`：飞书消息投递的目标 ID 类型，推荐保持 `chat_id`。
+- `defaultConversationId`：**高级可选**兜底项。仅在插件暂时拿不到会话路由时使用固定会话发送卡片。
+  - 常规场景建议不填，优先使用插件自动路由（已优先识别 `chat_id`）。
+  - 若必须填写，请填与 `receiveIdType` 对应的真实会话 ID（例如 `chat_id`），可从飞书原始事件或网关日志中获取。
 
 ### 3）重启 OpenClaw gateway
 
