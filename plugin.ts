@@ -51,6 +51,7 @@ type PersistedState = {
 
 const FEISHU_CHANNEL = "feishu";
 const FEISHU_RECEIVE_ID_TYPE = "chat_id" as const;
+const FEISHU_CHAT_ID_PREFIX = "oc_";
 const DEFAULT_STATE_FILE = ".openclaw-progress-plugin-state.json";
 const DEFAULT_RUN_MESSAGE_TTL_MS = 30 * 60 * 1000;
 
@@ -199,6 +200,17 @@ function extractSessionKeys(event: unknown, ctx: unknown): string[] {
   return [...result];
 }
 
+function isFeishuChatId(value?: string): value is string {
+  return Boolean(value && value.startsWith(FEISHU_CHAT_ID_PREFIX));
+}
+
+function firstValidFeishuChatId(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (isFeishuChatId(value)) return value;
+  }
+  return undefined;
+}
+
 function extractFeishuConversationId(event: unknown, ctx: unknown): string | undefined {
   const e = asObject(event);
   const c = asObject(ctx);
@@ -207,19 +219,19 @@ function extractFeishuConversationId(event: unknown, ctx: unknown): string | und
   const eMessage = asObject(e.message);
   const cMessage = asObject(c.message);
 
-  return (
-    asString(e.chatId) ??
-    asString(e.chat_id) ??
-    asString(eData.chatId) ??
-    asString(eData.chat_id) ??
-    asString(eMessage.chatId) ??
-    asString(eMessage.chat_id) ??
-    asString(c.chatId) ??
-    asString(c.chat_id) ??
-    asString(cData.chatId) ??
-    asString(cData.chat_id) ??
-    asString(cMessage.chatId) ??
-    asString(cMessage.chat_id)
+  return firstValidFeishuChatId(
+    asString(e.chatId),
+    asString(e.chat_id),
+    asString(eData.chatId),
+    asString(eData.chat_id),
+    asString(eMessage.chatId),
+    asString(eMessage.chat_id),
+    asString(c.chatId),
+    asString(c.chat_id),
+    asString(cData.chatId),
+    asString(cData.chat_id),
+    asString(cMessage.chatId),
+    asString(cMessage.chat_id),
   );
 }
 
@@ -319,6 +331,12 @@ export default {
         }
       }
       for (const entry of restore.routes) {
+        if (entry.channel === FEISHU_CHANNEL && !isFeishuChatId(entry.conversationId)) {
+          api.logger.warn(
+            `[progress-plugin] ignore invalid restored route conversationId=${entry.conversationId} sessionKey=${entry.sessionKey}`,
+          );
+          continue;
+        }
         routeBySessionKey.set(entry.sessionKey, {
           conversationId: entry.conversationId,
           channel: entry.channel,
@@ -363,9 +381,16 @@ export default {
       const lookupKeys = withRouteBridgeKeys(sessionKeys, conversationId);
       for (const key of lookupKeys) {
         const route = routeBySessionKey.get(key);
-        if (route) return route;
+        if (!route) continue;
+        if (route.channel === FEISHU_CHANNEL && !isFeishuChatId(route.conversationId)) {
+          api.logger.warn(
+            `[progress-plugin] ignore invalid route conversationId=${route.conversationId} sessionKey=${key}`,
+          );
+          continue;
+        }
+        return route;
       }
-      if (feishu.defaultConversationId) {
+      if (feishu.defaultConversationId && isFeishuChatId(feishu.defaultConversationId)) {
         return {
           channel: FEISHU_CHANNEL,
           conversationId: feishu.defaultConversationId,
@@ -376,6 +401,10 @@ export default {
     };
 
     const bindRoute = (sessionKeys: string[], conversationId: string): void => {
+      if (!isFeishuChatId(conversationId)) {
+        api.logger.warn(`[progress-plugin] skip bindRoute: invalid conversationId=${conversationId}`);
+        return;
+      }
       const route: Route = { channel: FEISHU_CHANNEL, conversationId, updatedAt: Date.now() };
       for (const key of withRouteBridgeKeys(sessionKeys, conversationId)) {
         routeBySessionKey.set(key, route);
