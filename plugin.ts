@@ -510,22 +510,26 @@ export default {
         }
       }
       for (const entry of restore.routes) {
-        const inferredType = inferFeishuRouteTarget(entry.conversationId)?.receiveIdType;
+        const inferredTarget = inferFeishuRouteTarget(entry.conversationId);
+        const inferredType = inferredTarget?.receiveIdType;
         const receiveIdType = entry.receiveIdType ?? inferredType ?? FEISHU_RECEIVE_ID_TYPE;
-        if (entry.channel === FEISHU_CHANNEL && !isValidFeishuRoute({ conversationId: entry.conversationId, receiveIdType })) {
+        const normalizedConversationId =
+          receiveIdType === "open_id" ? normalizeFeishuOpenId(entry.conversationId) ?? entry.conversationId : entry.conversationId;
+
+        if (entry.channel === FEISHU_CHANNEL && !isValidFeishuRoute({ conversationId: normalizedConversationId, receiveIdType })) {
           api.logger.warn(
-            `[progress-plugin] ignore invalid restored route conversationId=${entry.conversationId} receiveIdType=${receiveIdType} sessionKey=${entry.sessionKey}`,
+            `[progress-plugin] ignore invalid restored route conversationId=${entry.conversationId} normalizedConversationId=${normalizedConversationId} receiveIdType=${receiveIdType} sessionKey=${entry.sessionKey}`,
           );
           continue;
         }
         routeBySessionKey.set(entry.sessionKey, {
-          conversationId: entry.conversationId,
+          conversationId: normalizedConversationId,
           channel: entry.channel,
           receiveIdType,
           updatedAt: entry.updatedAt,
         });
         if (entry.channel === FEISHU_CHANNEL) {
-          lastConversationIdByChannel = entry.conversationId;
+          lastConversationIdByChannel = normalizedConversationId;
         }
       }
       for (const entry of restore.runs) {
@@ -588,19 +592,28 @@ export default {
     };
 
     const bindRoute = (sessionKeys: string[], target: RouteTarget): void => {
-      if (!isValidFeishuRoute(target)) {
+      const normalizedConversationId =
+        target.receiveIdType === "open_id"
+          ? normalizeFeishuOpenId(target.conversationId) ?? target.conversationId
+          : target.conversationId;
+      const normalizedTarget: RouteTarget = {
+        conversationId: normalizedConversationId,
+        receiveIdType: target.receiveIdType,
+      };
+
+      if (!isValidFeishuRoute(normalizedTarget)) {
         api.logger.warn(
-          `[progress-plugin] skip bindRoute: invalid conversationId=${target.conversationId} receiveIdType=${target.receiveIdType}`,
+          `[progress-plugin] skip bindRoute: invalid conversationId=${target.conversationId} normalizedConversationId=${normalizedConversationId} receiveIdType=${target.receiveIdType}`,
         );
         return;
       }
       const route: Route = {
         channel: FEISHU_CHANNEL,
-        conversationId: target.conversationId,
+        conversationId: normalizedConversationId,
         receiveIdType: target.receiveIdType,
         updatedAt: Date.now(),
       };
-      for (const key of withRouteBridgeKeys(sessionKeys, target.conversationId)) {
+      for (const key of withRouteBridgeKeys(sessionKeys, normalizedConversationId)) {
         routeBySessionKey.set(key, route);
       }
     };
